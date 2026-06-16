@@ -1,0 +1,112 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+body {
+  background-color: #f0f2f5;
+}
+
+.app-layout {
+  min-height: 100vh;
+}
+
+.app-sider {
+  background: #001529;
+}
+
+.app-logo {
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 16px;
+  font-weight: bold;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+
+.app-header {
+  background: #fff;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 1px 4px rgba(0,21,41,0.08);
+}
+
+.app-content {
+  margin: 16px;
+  padding: 24px;
+  background: #fff;
+  border-radius: 8px;
+  min-height: calc(100vh - 64px - 32px);
+}
+
+.stat-card {
+  text-align: center;
+  padding: 20px;
+}
+
+.stat-card .stat-value {
+  font-size: 32px;
+  font-weight: bold;
+  color: #1677ff;
+  margin: 8px 0;
+}
+
+.stat-card .stat-label {
+  color: #666;
+  font-size: 14px;
+}
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.page-title {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.filter-bar {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.discount-step {
+  padding: 8px 12px;
+  background: #fafafa;
+  border-left: 3px solid #1677ff;
+  margin-bottom: 8px;
+  border-radius: 0 4px 4px 0;
+}
+
+.discount-step.step-quota {
+  border-left-color: '#52c41a';
+}
+
+.discount-step.step-coupon {
+  border-left-color: '#faad14';
+}
+
+.discount-step.step-promotion {
+  border-left-color: '#722ed1';
+}
+
+.discount-step.step-negative_protection {
+  border-left-color: '#ff4d4f';
+}
