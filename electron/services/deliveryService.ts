@@ -1,6 +1,6 @@
 import { getDb } from '../database'
 import dayjs from 'dayjs'
-import { calculateDiscount, DiscountCalculateInput } from './discountService'
+import { calculateDiscount, DiscountCalculateInput, getCourierAvailableCoupons } from './discountService'
 import { getQuotaConfig, getCurrentMonthQuota } from './quotaService'
 
 function generatePickupCode() {
@@ -70,6 +70,20 @@ export function getDeliveryDetail(id: number) {
   return delivery
 }
 
+export function previewDelivery(data: any) {
+  const config = getQuotaConfig() as any
+  const calcInput: DiscountCalculateInput = {
+    courier_id: data.courier_id,
+    base_amount: config.delivery_fee,
+    overdue_amount: 0,
+    use_quota: data.use_quota,
+    coupon_id: data.courier_coupon_id,
+    selected_promotion_ids: data.promotion_ids,
+    preview: true
+  }
+  return calculateDiscount(calcInput)
+}
+
 export function createDelivery(data: any) {
   const db = getDb()
   const config = getQuotaConfig() as any
@@ -86,12 +100,13 @@ export function createDelivery(data: any) {
     overdue_amount: 0,
     use_quota: data.use_quota,
     coupon_id: data.courier_coupon_id,
-    selected_promotion_ids: data.promotion_ids
+    selected_promotion_ids: data.promotion_ids,
+    preview: false
   }
 
-  const discountResult = calculateDiscount(calcInput)
-
   const tx = db.transaction(() => {
+    const discountResult = calculateDiscount(calcInput)
+
     const result = db.prepare(`
       INSERT INTO deliveries (
         courier_id, locker_no, pickup_code, recipient_phone, size,
@@ -119,7 +134,7 @@ export function createDelivery(data: any) {
       db.prepare(`
         UPDATE courier_coupons
         SET status = 'used', used_at = datetime('now', 'localtime'), used_in_delivery = ?
-        WHERE id = ?
+        WHERE id = ? AND status = 'unused'
       `).run(result.lastInsertRowid, data.courier_coupon_id)
     }
 
@@ -143,7 +158,57 @@ export function calculateOverdueFee(delivery: any) {
   return { overdue_hours: overdueHours, overdue_fee: Number(overdueFee.toFixed(2)) }
 }
 
-export function pickupDelivery(pickupCode: string) {
+export function previewPickupDiscount(pickupCode: string, couponId?: number) {
+  const db = getDb()
+  const delivery = db.prepare('SELECT * FROM deliveries WHERE pickup_code = ?').get(pickupCode) as any
+
+  if (!delivery) {
+    return { success: false, message: '取件码不存在' }
+  }
+  if (delivery.status !== 'stored') {
+    return { success: false, message: '该包裹已被取走或状态异常' }
+  }
+
+  const overdueInfo = calculateOverdueFee(delivery)
+  if (overdueInfo.overdue_fee <= 0) {
+    return {
+      success: true,
+      delivery,
+      overdue_info: overdueInfo,
+      discount_result: {
+        base_amount: 0,
+        overdue_amount: 0,
+        total_before: 0,
+        discount_amount: 0,
+        final_amount: 0,
+        steps: [],
+        negative_protected: false
+      }
+    }
+  }
+
+  const availableCoupons = getCourierAvailableCoupons(delivery.courier_id, overdueInfo.overdue_fee)
+
+  const calcInput: DiscountCalculateInput = {
+    courier_id: delivery.courier_id,
+    base_amount: 0,
+    overdue_amount: overdueInfo.overdue_fee,
+    use_quota: false,
+    coupon_id: couponId,
+    preview: true
+  }
+  const discountResult = calculateDiscount(calcInput)
+
+  return {
+    success: true,
+    delivery,
+    overdue_info: overdueInfo,
+    available_coupons: availableCoupons,
+    discount_result: discountResult
+  }
+}
+
+export function pickupDelivery(pickupCode: string, couponId?: number) {
   const db = getDb()
   const delivery = db.prepare('SELECT * FROM deliveries WHERE pickup_code = ?').get(pickupCode) as any
 
@@ -162,15 +227,26 @@ export function pickupDelivery(pickupCode: string) {
         courier_id: delivery.courier_id,
         base_amount: 0,
         overdue_amount: overdueInfo.overdue_fee,
-        use_quota: false
+        use_quota: false,
+        coupon_id: couponId,
+        preview: false
       }
       const discountResult = calculateDiscount(calcInput)
+
+      if (couponId) {
+        db.prepare(`
+          UPDATE courier_coupons
+          SET status = 'used', used_at = datetime('now', 'localtime'), used_in_delivery = ?
+          WHERE id = ? AND status = 'unused'
+        `).run(delivery.id, couponId)
+      }
 
       db.prepare(`
         UPDATE deliveries
         SET status = 'picked', picked_at = datetime('now', 'localtime'),
             overdue_hours = ?, overdue_fee = ?,
-            total_fee = ?, discount_amount = ?, final_amount = ?
+            total_fee = ?, discount_amount = ?, final_amount = ?,
+            coupon_id = ?, discount_detail = ?
         WHERE id = ?
       `).run(
         overdueInfo.overdue_hours,
@@ -178,21 +254,24 @@ export function pickupDelivery(pickupCode: string) {
         discountResult.total_before,
         discountResult.discount_amount,
         discountResult.final_amount,
+        couponId || null,
+        JSON.stringify(discountResult),
         delivery.id
       )
+
+      return { success: true, message: '取件成功', overdue_info: overdueInfo, discount_result: discountResult }
     } else {
       db.prepare(`
         UPDATE deliveries
         SET status = 'picked', picked_at = datetime('now', 'localtime'), overdue_hours = 0
         WHERE id = ?
       `).run(delivery.id)
-    }
 
-    return true
+      return { success: true, message: '取件成功', overdue_info: overdueInfo, discount_result: null }
+    }
   })
 
-  tx()
-  return { success: true, message: '取件成功', overdue_info: overdueInfo }
+  return tx()
 }
 
 export function listCouriers() {

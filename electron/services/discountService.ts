@@ -1,6 +1,5 @@
 import { getDb } from '../database'
 import dayjs from 'dayjs'
-import { consumeQuota } from './quotaService'
 
 export function getDiscountRuleOrder() {
   const db = getDb()
@@ -69,7 +68,8 @@ export function getCourierAvailableCoupons(courierId: number, amount: number) {
   const db = getDb()
   const now = dayjs().format('YYYY-MM-DD HH:mm:ss')
   return db.prepare(`
-    SELECT cc.*, c.name, c.type, c.value, c.min_amount
+    SELECT cc.id, cc.courier_id, cc.coupon_id, cc.code, cc.status, cc.valid_from, cc.valid_to,
+           c.name, c.type, c.value, c.min_amount
     FROM courier_coupons cc
     JOIN coupons c ON cc.coupon_id = c.id
     WHERE cc.courier_id = ?
@@ -88,6 +88,7 @@ export interface DiscountCalculateInput {
   use_quota?: boolean
   coupon_id?: number
   selected_promotion_ids?: number[]
+  preview?: boolean
 }
 
 export interface DiscountStep {
@@ -107,24 +108,34 @@ export interface DiscountCalculateResult {
   final_amount: number
   use_quota: boolean
   quota_used: number
+  quota_available: boolean
   steps: DiscountStep[]
   applied_coupon?: any
   applied_promotions?: any[]
   negative_protected: boolean
+  preview: boolean
 }
 
 export function calculateDiscount(input: DiscountCalculateInput): DiscountCalculateResult {
   const db = getDb()
   const ruleOrder = getDiscountRuleOrder()
   const total_before = Number((input.base_amount + input.overdue_amount).toFixed(2))
+  const isPreview = input.preview !== false
   let current_amount = total_before
   const steps: DiscountStep[] = []
   let total_discount = 0
   let use_quota = false
   let quota_used = 0
+  let quota_available = false
   let applied_coupon: any = null
   let applied_promotions: any[] = []
   let negative_protected = false
+
+  if (input.use_quota && input.base_amount > 0) {
+    const { getCurrentMonthQuota } = require('./quotaService')
+    const quota = getCurrentMonthQuota(input.courier_id)
+    quota_available = quota && (quota as any).remaining_quota > 0
+  }
 
   for (const rule of ruleOrder) {
     const before_amount = Number(current_amount.toFixed(2))
@@ -200,11 +211,20 @@ export function calculateDiscount(input: DiscountCalculateInput): DiscountCalcul
         }
       }
     } else if (rule === 'quota') {
-      if (input.use_quota && input.base_amount > 0) {
-        const result = consumeQuota(input.courier_id, 1)
-        if (result.used_quota) {
+      if (input.use_quota && input.base_amount > 0 && quota_available) {
+        if (!isPreview) {
+          const { consumeQuota } = require('./quotaService')
+          const result = consumeQuota(input.courier_id, 1)
+          if (result.used_quota) {
+            use_quota = true
+            quota_used = 1
+          }
+        } else {
           use_quota = true
           quota_used = 1
+        }
+
+        if (use_quota) {
           const quotaDiscount = Math.min(input.base_amount, current_amount)
           if (quotaDiscount > 0) {
             current_amount = Number((current_amount - quotaDiscount).toFixed(2))
@@ -215,7 +235,7 @@ export function calculateDiscount(input: DiscountCalculateInput): DiscountCalcul
               before_amount,
               discount_amount: Number(quotaDiscount.toFixed(2)),
               after_amount: Number(current_amount.toFixed(2)),
-              detail: '使用免费投放额度'
+              detail: isPreview ? '使用免费投放额度（预览）' : '使用免费投放额度'
             })
           }
         }
@@ -224,14 +244,15 @@ export function calculateDiscount(input: DiscountCalculateInput): DiscountCalcul
   }
 
   if (current_amount < 0) {
-    total_discount += current_amount
+    const negativeAmount = Math.abs(current_amount)
+    total_discount -= negativeAmount
     current_amount = 0
     negative_protected = true
     steps.push({
       rule: 'negative_protection',
       rule_name: '负值兜底',
-      before_amount: Number((current_amount + Math.abs(current_amount)).toFixed(2)),
-      discount_amount: Number(Math.abs(current_amount).toFixed(2)),
+      before_amount: Number(negativeAmount.toFixed(2)),
+      discount_amount: Number(negativeAmount.toFixed(2)),
       after_amount: 0,
       detail: '优惠叠加后金额不能为负，已兜底至0元'
     })
@@ -245,9 +266,11 @@ export function calculateDiscount(input: DiscountCalculateInput): DiscountCalcul
     final_amount: Number(current_amount.toFixed(2)),
     use_quota,
     quota_used,
+    quota_available,
     steps,
     applied_coupon,
     applied_promotions,
-    negative_protected
+    negative_protected,
+    preview: isPreview
   }
 }
