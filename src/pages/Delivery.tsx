@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
-  Table, Button, Modal, Form, Input, Select, DatePicker, InputNumber,
+  Table, Button, Modal, Form, Input, Select, DatePicker,
   Space, Tag, message, Card, Descriptions, Divider, Row, Col
 } from 'antd'
 import { PlusOutlined, SearchOutlined, EyeOutlined } from '@ant-design/icons'
@@ -20,21 +20,21 @@ export default function DeliveryPage() {
   const [visible, setVisible] = useState(false)
   const [detailVisible, setDetailVisible] = useState(false)
   const [detail, setDetail] = useState<any>(null)
-  const [form] = Form.useForm()
-  const [filters, setFilters] = useState<any>({})
+  const [createForm] = Form.useForm()
+  const [filterForm] = Form.useForm()
+  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    loadData()
+    loadCouriersAndPromotions()
     loadConfig()
+    loadDeliveries()
   }, [])
 
-  const loadData = async () => {
-    const [l, c, p] = await Promise.all([
-      window.api.delivery.list(filters),
+  const loadCouriersAndPromotions = async () => {
+    const [c, p] = await Promise.all([
       window.api.courier.list(),
       window.api.discount.getPromotions()
     ])
-    setList(l)
     setCouriers(c)
     setPromotions(p)
   }
@@ -42,6 +42,16 @@ export default function DeliveryPage() {
   const loadConfig = async () => {
     const cfg = await window.api.quota.getConfig()
     setQuotaConfig(cfg)
+  }
+
+  const loadDeliveries = async (params: any = {}) => {
+    setLoading(true)
+    try {
+      const l = await window.api.delivery.list(params)
+      setList(l)
+    } finally {
+      setLoading(false)
+    }
   }
 
   const loadCourierCoupons = async (courierId: number) => {
@@ -56,34 +66,19 @@ export default function DeliveryPage() {
 
   const previewCalc = async (values: any) => {
     if (!values.courier_id) {
-      message.warning('请先选择快递员')
+      setCalcResult(null)
       return
     }
-    const result = await window.api.discount.calculate({
-      courier_id: values.courier_id,
-      base_amount: quotaConfig?.delivery_fee || 1,
-      overdue_amount: 0,
-      use_quota: values.use_quota,
-      coupon_id: values.courier_coupon_id,
-      selected_promotion_ids: values.promotion_ids
-    })
-    setCalcResult(result)
-  }
-
-  const handleSubmit = async (values: any) => {
     try {
-      const result = await window.api.delivery.create(values)
-      message.success(`投递成功！取件码：${result.pickup_code}`)
-      setVisible(false)
-      form.resetFields()
+      const result = await window.api.delivery.preview(values)
+      setCalcResult(result)
+    } catch (e) {
       setCalcResult(null)
-      loadData()
-    } catch (e: any) {
-      message.error('创建失败：' + e.message)
     }
   }
 
-  const handleSearch = (values: any) => {
+  const handleSearch = () => {
+    const values = filterForm.getFieldsValue()
     const params: any = {}
     if (values.courier_id) params.courier_id = values.courier_id
     if (values.status) params.status = values.status
@@ -91,9 +86,44 @@ export default function DeliveryPage() {
       params.start_date = values.date[0].format('YYYY-MM-DD')
       params.end_date = values.date[1].format('YYYY-MM-DD')
     }
-    if (values.keyword) params.keyword = values.keyword
-    setFilters(params)
-    loadData()
+    if (values.keyword) params.keyword = values.keyword.trim()
+    loadDeliveries(params)
+  }
+
+  const handleReset = () => {
+    filterForm.resetFields()
+    loadDeliveries({})
+  }
+
+  const handleSubmit = async () => {
+    try {
+      const values = await createForm.validateFields()
+      const result = await window.api.delivery.create(values)
+      message.success(`投递成功！取件码：${result.pickup_code}`)
+      setVisible(false)
+      createForm.resetFields()
+      setCalcResult(null)
+      setCurrentQuota(null)
+      loadDeliveries()
+    } catch (e: any) {
+      if (e.errorFields) return
+      message.error('创建失败：' + e.message)
+    }
+  }
+
+  const handleValuesChange = (changed: any, all: any) => {
+    if (changed.courier_id) {
+      loadCourierCoupons(changed.courier_id)
+      loadQuota(changed.courier_id)
+    }
+    if (
+      changed.courier_id !== undefined ||
+      changed.use_quota !== undefined ||
+      changed.courier_coupon_id !== undefined ||
+      changed.promotion_ids !== undefined
+    ) {
+      previewCalc(all)
+    }
   }
 
   const columns = [
@@ -137,15 +167,23 @@ export default function DeliveryPage() {
     setDetailVisible(true)
   }
 
+  const openCreateModal = () => {
+    createForm.resetFields()
+    setCalcResult(null)
+    setCurrentQuota(null)
+    setCoupons([])
+    setVisible(true)
+  }
+
   return (
     <div>
       <div className="page-header">
         <div className="page-title">投放管理</div>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setVisible(true)}>新建投递</Button>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>新建投递</Button>
       </div>
 
       <Card size="small" style={{ marginBottom: 16 }}>
-        <Form layout="inline" onFinish={handleSearch}>
+        <Form form={filterForm} layout="inline" onFinish={handleSearch}>
           <Form.Item name="courier_id" label="快递员">
             <Select placeholder="全部" allowClear style={{ width: 140 }}>
               {couriers.map(c => <Option key={c.id} value={c.id}>{c.name}</Option>)}
@@ -166,7 +204,7 @@ export default function DeliveryPage() {
           <Form.Item>
             <Space>
               <Button type="primary" htmlType="submit" icon={<SearchOutlined />}>查询</Button>
-              <Button onClick={() => { setFilters({}); loadData() }}>重置</Button>
+              <Button onClick={handleReset}>重置</Button>
             </Space>
           </Form.Item>
         </Form>
@@ -176,42 +214,38 @@ export default function DeliveryPage() {
         columns={columns}
         dataSource={list}
         rowKey="id"
+        loading={loading}
         pagination={{ pageSize: 10, showSizeChanger: true }}
       />
 
       <Modal
         title="新建投递"
         open={visible}
-        width={600}
-        onCancel={() => { setVisible(false); setCalcResult(null) }}
-        footer={null}
+        width={620}
+        onCancel={() => setVisible(false)}
+        footer={[
+          <Button key="cancel" onClick={() => setVisible(false)}>取消</Button>,
+          <Button key="submit" type="primary" onClick={handleSubmit}>确认投递</Button>
+        ]}
         destroyOnClose
+        maskClosable={false}
       >
         <Form
-          form={form}
+          form={createForm}
           layout="vertical"
-          onFinish={handleSubmit}
-          onValuesChange={(changed, all) => {
-            if (changed.courier_id) {
-              loadCourierCoupons(changed.courier_id)
-              loadQuota(changed.courier_id)
-              previewCalc(all)
-            }
-            if (changed.use_quota !== undefined || changed.courier_coupon_id || changed.promotion_ids) {
-              previewCalc(all)
-            }
-          }}
+          onValuesChange={handleValuesChange}
+          initialValues={{ locker_no: 'A01', size: 'medium', use_quota: false }}
         >
           <Row gutter={16}>
             <Col span={12}>
-              <Form.Item name="courier_id" label="快递员" rules={[{ required: true }]}>
+              <Form.Item name="courier_id" label="快递员" rules={[{ required: true, message: '请选择快递员' }]}>
                 <Select placeholder="请选择">
                   {couriers.map(c => <Option key={c.id} value={c.id}>{c.name} ({c.phone})</Option>)}
                 </Select>
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item name="locker_no" label="格口号" initialValue="A01" rules={[{ required: true }]}>
+              <Form.Item name="locker_no" label="格口号" rules={[{ required: true, message: '请输入格口号' }]}>
                 <Input placeholder="如：A01" />
               </Form.Item>
             </Col>
@@ -223,7 +257,7 @@ export default function DeliveryPage() {
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item name="size" label="包裹大小" initialValue="medium">
+              <Form.Item name="size" label="包裹大小">
                 <Select>
                   <Option value="small">小号</Option>
                   <Option value="medium">中号</Option>
@@ -237,22 +271,23 @@ export default function DeliveryPage() {
             <Card size="small" style={{ marginBottom: 12 }}>
               <Space>
                 <span>当月额度：</span>
-                <Tag color="green">剩余 {currentQuota.remaining_quota}/{currentQuota.total_quota}</Tag>
+                <Tag color="green">剩余 {currentQuota.remaining_quota}/{currentQuota.total_quota} 次</Tag>
+                {currentQuota.remaining_quota === 0 && <Tag color="red">已用完</Tag>}
               </Space>
             </Card>
           )}
 
-          <Divider>优惠选择</Divider>
+          <Divider style={{ margin: '12px 0' }}>优惠选择</Divider>
 
           <Form.Item name="use_quota" label="使用免费额度" valuePropName="checked">
-            <Select style={{ width: 120 }}>
+            <Select style={{ width: '100%' }}>
               <Option value={false}>不使用</Option>
               <Option value={true}>使用（抵扣投递费）</Option>
             </Select>
           </Form.Item>
 
           <Form.Item name="promotion_ids" label="满减活动">
-            <Select mode="multiple" placeholder="可选">
+            <Select mode="multiple" placeholder="可选，可多选" allowClear>
               {promotions.map(p => (
                 <Option key={p.id} value={p.id}>{p.name}（满{p.min_amount}减{p.discount_amount}）</Option>
               ))}
@@ -260,37 +295,33 @@ export default function DeliveryPage() {
           </Form.Item>
 
           <Form.Item name="courier_coupon_id" label="优惠券">
-            <Select placeholder="可选" allowClear>
+            <Select placeholder="可选，选择一张优惠券" allowClear>
               {coupons.map(c => (
                 <Option key={c.id} value={c.id}>
                   {c.name} - {c.type === 'fixed' ? `立减${c.value}元` : c.type === 'discount' ? `${c.value}折` : `免滞留${c.value}元`}
+                  {' '}（满{c.min_amount}可用）
                 </Option>
               ))}
             </Select>
           </Form.Item>
 
           {calcResult && (
-            <Card size="small" style={{ background: '#f6ffed', marginBottom: 16 }}>
-              <Descriptions column={1} size="small" title="费用计算预览">
+            <Card size="small" style={{ background: '#f6ffed', marginBottom: 0 }}>
+              <Descriptions column={1} size="small" title="费用计算预览（仅预览，不扣额度）">
                 <Descriptions.Item label="投递费">¥{calcResult.base_amount}</Descriptions.Item>
-                <Descriptions.Item label="优惠合计">-¥{calcResult.discount_amount}</Descriptions.Item>
+                <Descriptions.Item label="优惠合计">
+                  <span style={{ color: '#52c41a' }}>-¥{calcResult.discount_amount}</span>
+                </Descriptions.Item>
                 {calcResult.steps?.map((s: any, i: number) => (
-                  <Descriptions.Item key={i} label={s.rule_name}>{s.detail}（-¥{s.discount_amount}）</Descriptions.Item>
+                  <Descriptions.Item key={i} label={s.rule_name}>{s.detail}</Descriptions.Item>
                 ))}
                 <Descriptions.Item label="实付金额" labelStyle={{ fontWeight: 'bold' }}>
                   <span style={{ fontSize: 20, color: '#ff4d4f', fontWeight: 'bold' }}>¥{calcResult.final_amount}</span>
-                  {calcResult.negative_protected && <Tag color="red">负值兜底</Tag>}
+                  {calcResult.negative_protected && <Tag color="red" style={{ marginLeft: 8 }}>负值兜底</Tag>}
                 </Descriptions.Item>
               </Descriptions>
             </Card>
           )}
-
-          <Form.Item style={{ textAlign: 'right', marginBottom: 0 }}>
-            <Space>
-              <Button onClick={() => { setVisible(false); setCalcResult(null) }}>取消</Button>
-              <Button type="primary" htmlType="submit">确认投递</Button>
-            </Space>
-          </Form.Item>
         </Form>
       </Modal>
 
@@ -299,6 +330,7 @@ export default function DeliveryPage() {
         open={detailVisible}
         onCancel={() => setDetailVisible(false)}
         footer={[<Button key="ok" onClick={() => setDetailVisible(false)}>关闭</Button>]}
+        width={600}
       >
         {detail && (
           <Descriptions column={2} bordered size="small">
@@ -312,8 +344,8 @@ export default function DeliveryPage() {
             <Descriptions.Item label="取件时间" span={2}>{detail.picked_at || '待取件'}</Descriptions.Item>
             <Descriptions.Item label="投递费">¥{detail.delivery_fee}</Descriptions.Item>
             <Descriptions.Item label="滞留费">¥{detail.overdue_fee}（{detail.overdue_hours}小时）</Descriptions.Item>
-            <Descriptions.Item label="优惠金额">-¥{detail.discount_amount}</Descriptions.Item>
-            <Descriptions.Item label="实付金额">¥{detail.final_amount}</Descriptions.Item>
+            <Descriptions.Item label="优惠金额"><span style={{ color: '#52c41a' }}>-¥{detail.discount_amount}</span></Descriptions.Item>
+            <Descriptions.Item label="实付金额"><b>¥{detail.final_amount}</b></Descriptions.Item>
             {detail.discount_detail_parsed?.steps && (
               <Descriptions.Item label="优惠明细" span={2}>
                 {detail.discount_detail_parsed.steps.map((s: any, i: number) => (
@@ -329,4 +361,3 @@ export default function DeliveryPage() {
     </div>
   )
 }
-

@@ -22,7 +22,9 @@ export function registerIpcHandlers() {
 
   ipcMain.handle('delivery:list', (_e, params) => deliveryService.listDeliveries(params))
   ipcMain.handle('delivery:create', (_e, data) => deliveryService.createDelivery(data))
-  ipcMain.handle('delivery:pickup', (_e, pickupCode) => deliveryService.pickupDelivery(pickupCode))
+  ipcMain.handle('delivery:preview', (_e, data) => deliveryService.previewDelivery(data))
+  ipcMain.handle('delivery:pickup', (_e, pickupCode, couponId) => deliveryService.pickupDelivery(pickupCode, couponId))
+  ipcMain.handle('delivery:previewPickup', (_e, pickupCode, couponId) => deliveryService.previewPickupDiscount(pickupCode, couponId))
   ipcMain.handle('delivery:getDetail', (_e, id) => deliveryService.getDeliveryDetail(id))
 
   ipcMain.handle('coupon:list', (_e, params) => couponService.listCoupons(params))

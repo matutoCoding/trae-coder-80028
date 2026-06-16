@@ -20,7 +20,9 @@ declare global {
       delivery: {
         list: (params?: any) => Promise<any[]>
         create: (data: any) => Promise<any>
-        pickup: (pickupCode: string) => Promise<any>
+        preview: (data: any) => Promise<any>
+        pickup: (pickupCode: string, couponId?: number) => Promise<any>
+        previewPickup: (pickupCode: string, couponId?: number) => Promise<any>
         getDetail: (id: number) => Promise<any>
       }
       coupon: {

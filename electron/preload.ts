@@ -16,9 +16,11 @@ contextBridge.exposeInMainWorld('api', {
     updateConfig: (data: any) => ipcRenderer.invoke('quota:updateConfig', data)
   },
   delivery: {
-    list: (params: any) => ipcRenderer.invoke('delivery:list', params),
+    list: (params?: any) => ipcRenderer.invoke('delivery:list', params),
     create: (data: any) => ipcRenderer.invoke('delivery:create', data),
-    pickup: (pickupCode: string) => ipcRenderer.invoke('delivery:pickup', pickupCode),
+    preview: (data: any) => ipcRenderer.invoke('delivery:preview', data),
+    pickup: (pickupCode: string, couponId?: number) => ipcRenderer.invoke('delivery:pickup', pickupCode, couponId),
+    previewPickup: (pickupCode: string, couponId?: number) => ipcRenderer.invoke('delivery:previewPickup', pickupCode, couponId),
     getDetail: (id: number) => ipcRenderer.invoke('delivery:getDetail', id)
   },
   coupon: {
